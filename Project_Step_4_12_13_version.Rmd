@@ -1,0 +1,198 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+--
+title: "PSTAT126 Group Project Step 4"
+author: "Hanya Ansari, Carina Yuen, Daren Aguilera"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+date: "2023-12-10"
+---
+
+## Introduction:
+
+Wine Quality Based on Physicochemical Tests from UCI Machine Learning Repository <https://www.kaggle.com/datasets/uciml/red-wine-quality-cortez-et-al-2009/code?datasetId=4458&searchQuery=R>
+
+No Missing Attribute Values: 0
+
+Number of Instances: red wine: 1599
+
+Number of Variables: 12 total, 11 continuous, 1 discrete (fixed_acidity, volatile_acidity, citric_acid, residual_sugar, chlorides, free_sulfur_dioxide, total_sulfur_dioxide, density, pH, sulphates, alcohol and 1 integer output variable: quality score between 0 and 10)
+
+```{r}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = F,
+                      warning  = F,
+                      fig.width = 4,
+                      fig.height = 3,
+                      fig.align = 'center',
+                      fig.pos = 'H',
+                      warning = FALSE)
+
+library(leaps)
+library(tidyverse)
+library(tidymodels)
+library(modelr)
+library(ggplot2)
+library(GGally)
+library(olsrr)
+library(glmnet)
+library(trafo)
+library(rsample)
+
+#import data
+wine_data <- read.csv("C:/Users/Carina W Yuen/Downloads/archive/winequality-red.csv")
+#data <- read.csv("C:/Users/seren/Downloads/winequality-red.csv",sep=";")  
+# read_delim("winequality-red.csv", delim=";")
+
+#initialize variables
+quality_data <- wine_data$quality
+x_f <- wine_data$fixed.acidity
+x_v <- wine_data$volatile.acidity
+x_c <- wine_data$citric.acid
+x_r <- wine_data$residual.sugar
+x_ch <- wine_data$chlorides
+x_fs <- wine_data$free.sulfur.dioxide
+x_ts <- wine_data$total.sulfur.dioxide
+x_d <- wine_data$density
+x_p <- wine_data$pH
+x_s <- wine_data$sulphates
+x_a <- wine_data$alcohol
+```
+
+##Best model from step 3
+
+
+```{r}
+set.seed(112121)
+wine_data
+wine_partition <- resample_partition(wine_data,p = c(test = 0.3,train = 0.7))
+
+
+fit_model_3 <- lm(x_v ~., data=wine_partition$train)
+wine_partition_final<-wine_partition$train # without discrete variable quality score
+out <- regsubsets(volatile.acidity~ ., data=wine,
+               
+                  method = 'seqrep',
+                  nbest = 10,
+                  nvmax = 10)
+summary(out)
+library(leaps)
+library(tibble)
+library(dplyr)
+```
+
+
+## Shrinkage Methods: Lasso and Ridge Regression with continuous response variable 
+From our previous Project Step, our best model was fit_normal3, a linear model that has the response variable as volatile acidity, and the predictors (exlcuding itself) as the whole model. 
+
+
+# Ridge Regression
+Ridge regression shrinks the coefficients towards zero. Upon using coefficients (best_model), we got the following estimates: 10.42 for the intercept, 0.987 for alcohol, -0.0025 for free sulfur dioxide, and -0.0043 for total sulfur dioxide. Using cv.glmnet, we found that the optimal lambda is 0.03105, as a dotted vertical line marks the value of Log(λ) that minimizes the MSE value.
+
+```{r}
+require(glmnet)
+```
+
+```{r}
+#x = model.matrix(Salary~., Hitters)[,-1]
+#y = Hitters$Salary
+x = model.matrix(quality~., data)[,-1]
+y = wine_data$quality
+cv_model0 <- cv.glmnet(x,y,alpha=1)
+
+better_lambda <- cv_model0$lambda.min;better_lambda
+
+better_model <- glmnet(x,y,alpha = 1, lambda = better_lambda)
+coef(better_model)
+```
+
+```{r}
+model1 <- lm(quality ~ -1.025008640*volatile.acidity + -0.005994492*citric.acid +0.002477866*residual.sugar + -1.762098962*chlorides + 0.002860910*free.sulfur.dioxide  + -0.002816664*total.sulfur.dioxide + -0.401321138*pH + 0.831568363*sulphates + 0.285812804*alcohol, data)
+```
+
+
+```{r}
+# set grid 
+grid = 10^seq(10, -2, length = 100)
+ridge_mod = glmnet(x, y, alpha = 0, lambda = grid)
+pred <- predict(object = ridge_mod, newx = x)
+```
+
+```{r}
+set.seed(1) #we set a random seed first so our results will be reproducible.
+cv.out.ridge=cv.glmnet(x, y, alpha = 0)
+plot(cv.out.ridge)
+abline(v = log(cv.out.ridge$lambda.min), lwd=3, lty=2)
+bestlam = cv.out.ridge$lambda.min
+bestlam
+out = glmnet(x,y,alpha=0)
+#predict(out,type="coefficients",s=bestlam)[1:20,]
+```
+
+
+
+```{r}
+fit_normal3 <- lm(volatile.acidity~ ., data)
+x_drop_va <- subset(data, select=-volatile.acidity)
+scaled_x <- scale(x_drop_va) # drop volatile acidity
+cv_model <- cv.glmnet(scaled_x, y, alpha=1)
+best_lambda <- cv_model$lambda.min;best_lambda
+
+print(best_lambda)
+
+best_model <-glmnet(scaled_x, y, alpha = 0, lambda = best_lambda)
+coefficients(best_model)
+
+coef_pos <- abs(coefficients(best_model)[2:12])
+coef_mean <- mean(coef_pos)
+coef_mean
+
+# plot?
+par(mar = c(7, 4, 2.2, 0.5));plot(cv_model, cex=0.8)
+
+```
+# Lasso Regression
+We decided to fit the other predictors to our response variable, volatile acidity. Using Lasso Regression, we obtained the following estimates for the intercept, and coefficients of fixed acidity, and density, respectively from the best model : 10.4230, 0.8485, -1.0751). Fixed acidity and density were highlighted because they were relatively large in magnitude, compared to the mean predictor magnitude (excluding the intercept) is about 0.3245. The optimal lambda (to minimize test MSE) was calculated to be about 0.001139. The small eigenvalue indicates multicollinearity.
+```{r}
+require(glmnet)
+
+fit_normal3 <- lm(volatile.acidity~ ., data)
+x_drop_va <- subset(data, select=-volatile.acidity)
+scaled_x <- scale(x_drop_va) # drop volatile acidity
+cv_model <- cv.glmnet(scaled_x, y, alpha=1)
+best_lambda <- cv_model$lambda.min;best_lambda
+
+print(best_lambda)
+
+best_model <-glmnet(scaled_x, y, alpha = 1, lambda = best_lambda)
+coefficients(best_model)
+
+coef_pos <- abs(coefficients(best_model)[2:12])
+coef_mean <- mean(coef_pos)
+coef_mean
+
+# plot?
+par(mar = c(7, 4, 2.2, 0.5));plot(cv_model, cex=0.8)
+
+
+# calculate R squared of model on the training data
+
+# predictions using fitted best model
+# va_predicted <- predict(cv_model, s=best_lambda, newx)
+```
+**Weighted Least Squares**
+```{r}
+plot(fitted(fit_normal3), resid(fit_normal3), xlab='fitted vals', ylab='residuals')
+
+abline(0,0)
+
+wt <- 1 / lm(abs(fit_normal3$residuals) ~ fit_normal3$fitted.values)$fitted.values^2
+
+```
+
+ 
